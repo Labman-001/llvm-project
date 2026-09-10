@@ -177,6 +177,7 @@ if (BOLT_ENABLE_RUNTIME)
     COMPONENT bolt)
   set(LIBBOLT_RT_INSTR "${CMAKE_CURRENT_BINARY_DIR}/bolt_rt-bins/lib${LLVM_LIBDIR_SUFFIX}/libbolt_rt_instr.a")
   set(LIBBOLT_RT_HUGIFY "${CMAKE_CURRENT_BINARY_DIR}/bolt_rt-bins/lib${LLVM_LIBDIR_SUFFIX}/libbolt_rt_hugify.a")
+  set(LIBBOLT_RT_IWYN "${CMAKE_CURRENT_BINARY_DIR}/bolt_rt-bins/lib${LLVM_LIBDIR_SUFFIX}/libbolt_rt_iwyn.a")
 endif()
 
 find_program(GNU_LD_EXECUTABLE NAMES ${LLVM_DEFAULT_TARGET_TRIPLE}-ld.bfd ld.bfd DOC "GNU ld")

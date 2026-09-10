@@ -34,7 +34,6 @@ namespace opts {
 using namespace llvm;
 // FIXME! Upstream change
 // extern cl::opt<bool> CheckOverlappingElements;
-extern cl::opt<bool> Instrument;
 extern cl::opt<bool> InstrumentCalls;
 extern cl::opt<bolt::JumpTableSupportLevel> JumpTables;
 extern cl::opt<bool> KeepTmp;
@@ -85,7 +84,7 @@ MachORewriteInstance::MachORewriteInstance(object::MachOObjectFile *InputFile,
   BC->initializeTarget(std::unique_ptr<MCPlusBuilder>(
       createMCPlusBuilder(BC->TheTriple->getArch(), BC->MIA.get(),
                           BC->MII.get(), BC->MRI.get(), BC->STI.get())));
-  if (opts::Instrument)
+  if (opts::isCounterInstrumentation())
     BC->setRuntimeLibrary(std::make_unique<InstrumentationRuntimeLibrary>());
 }
 
@@ -260,7 +259,7 @@ void MachORewriteInstance::discoverFileObjects() {
     if (It == BC->getBinaryFunctions().end()) {
       BinaryFunction *Function = BC->createBinaryFunction(
           std::move(SymbolName), *Section, Address, SymbolSize);
-      if (!opts::Instrument)
+      if (!opts::isCounterInstrumentation())
         Function->setOutputAddress(Function->getAddress());
 
     } else {
@@ -338,7 +337,7 @@ void MachORewriteInstance::postProcessFunctions() {
 
 void MachORewriteInstance::runOptimizationPasses() {
   BinaryFunctionPassManager Manager(*BC);
-  if (opts::Instrument) {
+  if (opts::isCounterInstrumentation()) {
     Manager.registerPass(std::make_unique<PatchEntries>());
     Manager.registerPass(std::make_unique<Instrumentation>(opts::NeverPrint));
   }
@@ -363,7 +362,7 @@ void MachORewriteInstance::runOptimizationPasses() {
 
 void MachORewriteInstance::mapInstrumentationSection(
     StringRef SectionName, BOLTLinker::SectionMapper MapSection) {
-  if (!opts::Instrument)
+  if (!opts::isCounterInstrumentation())
     return;
   ErrorOr<BinarySection &> Section = BC->getUniqueSectionByName(SectionName);
   if (!Section) {
@@ -398,7 +397,7 @@ void MachORewriteInstance::mapCodeSections(
     Function->setImageSize(FuncSection->getOutputSize());
   }
 
-  if (opts::Instrument) {
+  if (opts::isCounterInstrumentation()) {
     ErrorOr<BinarySection &> BOLT = BC->getUniqueSectionByName("__bolt");
     if (!BOLT) {
       llvm::errs() << "Cannot find __bolt section\n";
@@ -483,7 +482,7 @@ void MachORewriteInstance::emitAndLink() {
 
 void MachORewriteInstance::writeInstrumentationSection(StringRef SectionName,
                                                        raw_fd_ostream &OS) {
-  if (!opts::Instrument)
+  if (!opts::isCounterInstrumentation())
     return;
   ErrorOr<BinarySection &> Section = BC->getUniqueSectionByName(SectionName);
   if (!Section) {
@@ -513,7 +512,8 @@ void MachORewriteInstance::rewriteFile() {
     if (!Function.isSimple())
       continue;
     assert(Function.isEmitted() && "Simple function has not been emitted");
-    if (!opts::Instrument && (Function.getImageSize() > Function.getMaxSize()))
+    if (!opts::isCounterInstrumentation() &&
+        (Function.getImageSize() > Function.getMaxSize()))
       continue;
     if (opts::Verbosity >= 2)
       outs() << "BOLT: rewriting function \"" << Function << "\"\n";
@@ -551,7 +551,7 @@ void MachORewriteInstance::adjustCommandLineOptions() {
 //  opts::CheckOverlappingElements = false;
   if (!opts::AlignText.getNumOccurrences())
     opts::AlignText = BC->PageAlign;
-  if (opts::Instrument.getNumOccurrences())
+  if (opts::isCounterInstrumentation())
     opts::ForcePatch = true;
   opts::JumpTables = JTS_MOVE;
   opts::InstrumentCalls = false;

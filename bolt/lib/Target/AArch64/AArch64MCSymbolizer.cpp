@@ -11,6 +11,7 @@
 #include "bolt/Core/BinaryFunction.h"
 #include "bolt/Core/MCPlusBuilder.h"
 #include "bolt/Core/Relocation.h"
+#include "bolt/Utils/CommandLineOpts.h"
 #include "llvm/MC/MCInst.h"
 #include "llvm/Support/Debug.h"
 
@@ -54,6 +55,18 @@ bool AArch64MCSymbolizer::tryAddingSymbolicOperand(
 
     LLVM_DEBUG(dbgs() << "BOLT-DEBUG: ignoring relocation at 0x"
                       << Twine::utohexstr(InstAddress) << '\n');
+  }
+
+  // AArch64 function instrumentation in non-relocation mode emits moved
+  // function copies. Preserve the original ADRP target page in those copies;
+  // the raw immediate is relative to the original instruction address.
+  if (BC.MIB->isADRP(Inst) && opts::isInstrumentWhatUNeed()) {
+    const uint64_t TargetPage =
+        (InstAddress & ~0xfffULL) + (static_cast<int64_t>(Value) << 12);
+    const MCExpr *Expr = MCConstantExpr::create(TargetPage, *Ctx);
+    Inst.addOperand(MCOperand::createExpr(BC.MIB->getTargetExprFor(
+        Inst, Expr, *Ctx, ELF::R_AARCH64_ADR_PREL_PG_HI21)));
+    return true;
   }
 
   if (!BC.MIB->hasPCRelOperand(Inst))

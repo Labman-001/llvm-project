@@ -19,6 +19,7 @@
 #include "bolt/Passes/IdenticalCodeFolding.h"
 #include "bolt/Passes/IndirectCallPromotion.h"
 #include "bolt/Passes/Inliner.h"
+#include "bolt/Passes/InstrumentWhatUNeed.h"
 #include "bolt/Passes/Instrumentation.h"
 #include "bolt/Passes/JTFootprintReduction.h"
 #include "bolt/Passes/LongJmp.h"
@@ -409,7 +410,7 @@ Error BinaryFunctionPassManager::runAllPasses(BinaryContext &BC) {
 
   Manager.registerPass(std::make_unique<ValidateMemRefs>(NeverPrint));
 
-  if (opts::Instrument)
+  if (opts::isCounterInstrumentation())
     Manager.registerPass(std::make_unique<Instrumentation>(NeverPrint));
   else if (opts::Hugify)
     Manager.registerPass(std::make_unique<HugePage>(NeverPrint));
@@ -473,6 +474,9 @@ Error BinaryFunctionPassManager::runAllPasses(BinaryContext &BC) {
   Manager.registerPass(std::make_unique<CMOVConversion>(),
                        opts::CMOVConversionFlag);
 
+  Manager.registerPass(std::make_unique<InstrumentWhatUNeed>(NeverPrint),
+                       opts::isInstrumentWhatUNeed());
+
   // This pass syncs local branches with CFG. If any of the following
   // passes breaks the sync - they either need to re-run the pass or
   // fix branches consistency internally.
@@ -529,8 +533,9 @@ Error BinaryFunctionPassManager::runAllPasses(BinaryContext &BC) {
   // memory profiling data.
   Manager.registerPass(std::make_unique<ReorderData>());
 
-  // Patch original function entries
-  if (BC.HasRelocations)
+  // Patch original function entries. Function instrumentation can move
+  // functions even when the input has no code relocation records.
+  if (BC.HasRelocations || opts::isInstrumentWhatUNeed())
     Manager.registerPass(std::make_unique<PatchEntries>());
 
   // Assign each function an output section.

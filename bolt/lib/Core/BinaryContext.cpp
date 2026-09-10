@@ -1361,7 +1361,7 @@ bool BinaryContext::registerFragment(BinaryFunction &TargetFunction,
   TargetFunction.addParentFragment(Function);
   Function.addFragment(TargetFunction);
   FragmentClasses.unionSets(&TargetFunction, &Function);
-  if (!HasRelocations) {
+  if (!HasRelocations && !opts::isInstrumentWhatUNeed()) {
     TargetFunction.setSimple(false);
     Function.setSimple(false);
   }

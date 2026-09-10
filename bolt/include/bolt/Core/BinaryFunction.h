@@ -399,6 +399,10 @@ private:
   /// redirects execution to the new function body.
   bool NeedsPatch{false};
 
+  /// True if the function must be emitted in newly allocated text even when
+  /// processing an input without code relocation records.
+  bool MoveToNewAddress{false};
+
   /// True if the function should not have an associated symbol table entry.
   bool IsAnonymous{false};
 
@@ -1507,6 +1511,9 @@ public:
   /// Return true if the function requires a patch.
   bool needsPatch() const { return NeedsPatch; }
 
+  /// Return true if the function is emitted outside its original address.
+  bool shouldMoveToNewAddress() const;
+
   /// Return true if the function should not have associated symbol table entry.
   bool isAnonymous() const { return IsAnonymous; }
 
@@ -1943,6 +1950,10 @@ public:
 
   /// Mark the function for patching.
   void setNeedsPatch(bool V) { NeedsPatch = V; }
+
+  /// Emit the function in newly allocated text instead of overwriting its
+  /// original bytes.
+  void setMoveToNewAddress(bool V = true);
 
   /// Indicate if the function should have a name in the symbol table.
   void setAnonymous(bool V) {

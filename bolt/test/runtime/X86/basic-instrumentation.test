@@ -18,5 +18,11 @@ RUN: cat %t.fdata | FileCheck -check-prefix=CHECK %s
 # Check BOLT works with this profile
 RUN: llvm-bolt %t.exe --data %t.fdata -o %t.2 --reorder-blocks=cache
 
+# Check the explicit spelling selects the same counter instrumentation mode.
+RUN: llvm-bolt %t.exe -o %t.explicit --instrument=counter \
+RUN:   --instrumentation-file=%t.explicit.fdata
+RUN: %t.explicit
+RUN: cat %t.explicit.fdata | FileCheck -check-prefix=CHECK %s
+
 # The instrumented profile should at least say main was called once
 CHECK: main 0 0 1{{$}}

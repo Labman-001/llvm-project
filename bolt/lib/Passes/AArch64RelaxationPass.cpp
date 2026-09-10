@@ -106,15 +106,19 @@ void AArch64RelaxationPass::runOnFunction(BinaryFunction &BF) {
 }
 
 Error AArch64RelaxationPass::runOnFunctions(BinaryContext &BC) {
-  if (!opts::AArch64PassOpt || !BC.HasRelocations)
+  if (!opts::AArch64PassOpt || !BC.isAArch64())
     return Error::success();
 
   ParallelUtilities::WorkFuncTy WorkFun = [&](BinaryFunction &BF) {
     runOnFunction(BF);
   };
 
+  ParallelUtilities::PredicateTy SkipFunc = [&](const BinaryFunction &BF) {
+    return !BC.HasRelocations && !BF.shouldMoveToNewAddress();
+  };
+
   ParallelUtilities::runOnEachFunction(
-      BC, ParallelUtilities::SchedulingPolicy::SP_TRIVIAL, WorkFun, nullptr,
+      BC, ParallelUtilities::SchedulingPolicy::SP_TRIVIAL, WorkFun, SkipFunc,
       "AArch64RelaxationPass");
 
   if (PassFailed)

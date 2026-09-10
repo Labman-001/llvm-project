@@ -33,6 +33,7 @@
 #include "bolt/Rewrite/JITLinkLinker.h"
 #include "bolt/Rewrite/MetadataRewriters.h"
 #include "bolt/RuntimeLibs/HugifyRuntimeLibrary.h"
+#include "bolt/RuntimeLibs/IWYNRuntimeLibrary.h"
 #include "bolt/RuntimeLibs/InstrumentationRuntimeLibrary.h"
 #include "bolt/Utils/CommandLineOpts.h"
 #include "bolt/Utils/Utils.h"
@@ -80,7 +81,6 @@ namespace opts {
 
 extern cl::list<std::string> HotTextMoveSections;
 extern cl::opt<bool> Hugify;
-extern cl::opt<bool> Instrument;
 extern cl::opt<uint32_t> InstrumentationSleepTime;
 extern cl::opt<bool> KeepNops;
 extern cl::opt<bool> LargeCodeModel;
@@ -475,7 +475,7 @@ RewriteInstance::RewriteInstance(ELFObjectFileBase *File, const int Argc,
   if (opts::UpdateDebugSections)
     DebugInfoRewriter = std::make_unique<DWARFRewriter>(*BC);
 
-  if (opts::Instrument)
+  if (opts::isCounterInstrumentation())
     BC->setRuntimeLibrary(std::make_unique<InstrumentationRuntimeLibrary>());
   else if (opts::Hugify)
     BC->setRuntimeLibrary(std::make_unique<HugifyRuntimeLibrary>());
@@ -783,7 +783,7 @@ Error RewriteInstance::discoverStorage(ELFObjectFile<ELFT> *ELFObjFile) {
 
     // Reserve two more pheaders to avoid having writeable and executable
     // segment in instrumented binary.
-    if (opts::Instrument)
+    if (opts::isCounterInstrumentation())
       Phnum += 2;
 
     NextAvailableAddress +=
@@ -825,8 +825,12 @@ Error RewriteInstance::run() {
     return E;
   adjustCommandLineOptions();
   discoverFileObjects();
+  if (!BC->getRuntimeLibrary() && IWYNRuntimeLibrary::needsRuntime(*BC)) {
+    BC->setRuntimeLibrary(std::make_unique<IWYNRuntimeLibrary>());
+    BC->getRuntimeLibrary()->adjustCommandLineOptions(*BC);
+  }
 
-  if (opts::Instrument && !BC->IsStaticExecutable) {
+  if (opts::isCounterInstrumentation() && !BC->IsStaticExecutable) {
     if (Error E = discoverRtInitAddress())
       return E;
     if (Error E = discoverRtFiniAddress())
@@ -873,7 +877,7 @@ Error RewriteInstance::run() {
 
   updateMetadata();
 
-  if (opts::Instrument && !BC->IsStaticExecutable) {
+  if (opts::isCounterInstrumentation() && !BC->IsStaticExecutable) {
     if (Error E = updateRtInitReloc())
       return E;
     if (Error E = updateRtFiniReloc())
@@ -2576,6 +2580,35 @@ Error RewriteInstance::readSpecialSections() {
 }
 
 void RewriteInstance::adjustCommandLineOptions() {
+  if (opts::isCounterInstrumentation() && opts::isInstrumentWhatUNeed()) {
+    BC->errs() << "BOLT-ERROR: counter instrumentation cannot be combined "
+                  "with function entry/exit instrumentation\n";
+    exit(1);
+  }
+  if (!opts::isInstrumentWhatUNeed() &&
+      opts::InstrumentFuncList.getNumOccurrences()) {
+    BC->errs() << "BOLT-ERROR: --instrument-func-list requires "
+                  "--instrument=func-entry or --instrument=func-exit\n";
+    exit(1);
+  }
+  if (!opts::isInstrumentWhatUNeed() &&
+      opts::InstrumentFuncListFile.getNumOccurrences()) {
+    BC->errs() << "BOLT-ERROR: --instrument-func-list-file requires "
+                  "--instrument=func-entry or --instrument=func-exit\n";
+    exit(1);
+  }
+  if (!opts::isInstrumentWhatUNeed() &&
+      opts::InstrumentFuncPrint.getNumOccurrences()) {
+    BC->errs() << "BOLT-ERROR: --instrument-func-print requires "
+                  "--instrument=func-entry or --instrument=func-exit\n";
+    exit(1);
+  }
+  if (opts::isInstrumentWhatUNeed() && opts::Hugify) {
+    BC->errs() << "BOLT-ERROR: function entry/exit instrumentation cannot be "
+                  "combined with --hugify\n";
+    exit(1);
+  }
+
   if (BC->isAArch64() && !BC->HasRelocations)
     BC->errs() << "BOLT-WARNING: non-relocation mode for AArch64 is not fully "
                   "supported\n";
@@ -2646,7 +2679,7 @@ void RewriteInstance::adjustCommandLineOptions() {
     exit(1);
   }
 
-  if (opts::Instrument ||
+  if (opts::isCounterInstrumentation() ||
       (opts::ReorderFunctions != ReorderFunctions::RT_NONE &&
        !opts::HotText.getNumOccurrences())) {
     opts::HotText = true;
@@ -2655,14 +2688,15 @@ void RewriteInstance::adjustCommandLineOptions() {
     opts::HotText = false;
   }
 
-  if (opts::Instrument && opts::UseGnuStack) {
+  if (opts::isCounterInstrumentation() && opts::UseGnuStack) {
     BC->errs() << "BOLT-ERROR: cannot avoid having writeable and executable "
                   "segment in instrumented binary if program headers will be "
                   "updated in place\n";
     exit(1);
   }
 
-  if (opts::Instrument && opts::RuntimeLibInitHook == opts::RLIH_ENTRY_POINT &&
+  if (opts::isCounterInstrumentation() &&
+      opts::RuntimeLibInitHook == opts::RLIH_ENTRY_POINT &&
       !BC->HasInterpHeader && !BC->IsStaticExecutable) {
     BC->errs()
         << "BOLT-WARNING: adjusted runtime-lib-init-hook to 'init' due to "
@@ -4608,6 +4642,27 @@ void RewriteInstance::mapCodeSections(BOLTLinker::SectionMapper MapSection) {
     InjectedFunction->setImageSize(FunctionSection->getOutputSize());
   }
 
+  if (opts::isInstrumentWhatUNeed()) {
+    for (BinaryFunction *InjectedFunction : BC->getInjectedBinaryFunctions()) {
+      if (InjectedFunction->getOutputAddress() || InjectedFunction->isPatch() ||
+          !InjectedFunction->isEmitted())
+        continue;
+
+      ErrorOr<BinarySection &> FunctionSection =
+          InjectedFunction->getCodeSection();
+      assert(FunctionSection && "function should have section");
+      if (!FunctionSection->getOutputAddress()) {
+        NextAvailableAddress =
+            alignTo(NextAvailableAddress, FunctionSection->getAlignment());
+        FunctionSection->setOutputAddress(NextAvailableAddress);
+        MapSection(*FunctionSection, NextAvailableAddress);
+        NextAvailableAddress += FunctionSection->getOutputSize();
+      }
+      InjectedFunction->setImageAddress(FunctionSection->getAllocAddress());
+      InjectedFunction->setImageSize(FunctionSection->getOutputSize());
+    }
+  }
+
   // Populate the list of sections to be allocated.
   std::vector<BinarySection *> CodeSections = getCodeSections();
 
@@ -4771,6 +4826,24 @@ void RewriteInstance::mapCodeSectionsInPlace(
   // Processing in non-relocation mode.
   uint64_t NewTextSectionStartAddress = NextAvailableAddress;
 
+  if (opts::isInstrumentWhatUNeed()) {
+    // Instruction patches are emitted as injected functions with a fixed
+    // output address in the original text.
+    for (BinaryFunction *InjectedFunction : BC->getInjectedBinaryFunctions()) {
+      const uint64_t OutputAddress = InjectedFunction->getOutputAddress();
+      if (!OutputAddress)
+        continue;
+
+      ErrorOr<BinarySection &> FunctionSection =
+          InjectedFunction->getCodeSection();
+      assert(FunctionSection && "function should have section");
+      FunctionSection->setOutputAddress(OutputAddress);
+      MapSection(*FunctionSection, OutputAddress);
+      InjectedFunction->setImageAddress(FunctionSection->getAllocAddress());
+      InjectedFunction->setImageSize(FunctionSection->getOutputSize());
+    }
+  }
+
   for (auto &BFI : BC->getBinaryFunctions()) {
     BinaryFunction &Function = BFI.second;
     if (!Function.isEmitted())
@@ -4778,15 +4851,25 @@ void RewriteInstance::mapCodeSectionsInPlace(
 
     ErrorOr<BinarySection &> FuncSection = Function.getCodeSection();
     assert(FuncSection && "cannot find section for function");
-    FuncSection->setOutputAddress(Function.getAddress());
+
+    uint64_t OutputAddress = Function.getAddress();
+    if (Function.shouldMoveToNewAddress()) {
+      NextAvailableAddress =
+          alignTo(NextAvailableAddress, FuncSection->getAlignment());
+      OutputAddress = NextAvailableAddress;
+      NextAvailableAddress += FuncSection->getOutputSize();
+      Function.setFileOffset(getFileOffsetForAddress(OutputAddress));
+    }
+
+    FuncSection->setOutputAddress(OutputAddress);
     LLVM_DEBUG(dbgs() << "BOLT: mapping 0x"
                       << Twine::utohexstr(FuncSection->getAllocAddress())
-                      << " to 0x" << Twine::utohexstr(Function.getAddress())
-                      << '\n');
-    MapSection(*FuncSection, Function.getAddress());
+                      << " to 0x" << Twine::utohexstr(OutputAddress) << '\n');
+    MapSection(*FuncSection, OutputAddress);
     Function.setImageAddress(FuncSection->getAllocAddress());
     Function.setImageSize(FuncSection->getOutputSize());
-    assert(Function.getImageSize() <= Function.getMaxSize() &&
+    assert((Function.shouldMoveToNewAddress() ||
+            Function.getImageSize() <= Function.getMaxSize()) &&
            "Unexpected large function");
 
     if (!Function.isSplit())
@@ -4918,7 +5001,7 @@ void RewriteInstance::mapAllocatableSections(
         MapSection(Section, Section.getAddress());
       } else {
         uint64_t Alignment = Section.getAlignment();
-        if (opts::Instrument && StartLinkingRuntimeLib) {
+        if (opts::isCounterInstrumentation() && StartLinkingRuntimeLib) {
           Alignment = BC->RegularPageSize;
           StartLinkingRuntimeLib = false;
         }
@@ -4980,7 +5063,7 @@ void RewriteInstance::updateSegmentInfo() {
                                BC->PageAlign,
                                true,
                                false};
-    if (!opts::Instrument) {
+    if (!opts::isCounterInstrumentation()) {
       BC->NewSegments.push_back(TextSegment);
     } else {
       ErrorOr<BinarySection &> Sec =
@@ -5662,6 +5745,19 @@ void RewriteInstance::updateELFSymbolTable(
     return NewIndex;
   };
 
+  auto getOutputSectionIndex = [&](uint64_t Address) {
+    for (const BinarySection &Section : BC->allocatableSections()) {
+      if (!Section.isFinalized() || !Section.getOutputSize())
+        continue;
+      const uint64_t Start = Section.getOutputAddress();
+      if (Start <= Address && Address < Start + Section.getOutputSize()) {
+        assert(Section.getIndex() && "output section must have an index");
+        return Section.getIndex();
+      }
+    }
+    llvm_unreachable("cannot find output section for moved function");
+  };
+
   // Get the extra symbol name of a split fragment; used in addExtraSymbols.
   auto getSplitSymbolName = [&](const FunctionFragment &FF,
                                 const ELFSymTy &FunctionSymbol) {
@@ -5862,7 +5958,10 @@ void RewriteInstance::updateELFSymbolTable(
       if (Function->isEmitted()) {
         NewSymbol.st_value = Function->getOutputAddress();
         NewSymbol.st_size = Function->getOutputSize();
-        NewSymbol.st_shndx = Function->getCodeSection()->getIndex();
+        NewSymbol.st_shndx =
+            Function->shouldMoveToNewAddress()
+                ? getOutputSectionIndex(Function->getOutputAddress())
+                : Function->getCodeSection()->getIndex();
       } else if (Symbol.st_shndx < ELF::SHN_LORESERVE) {
         NewSymbol.st_shndx = getNewSectionIndex(Symbol.st_shndx);
       }
@@ -5926,7 +6025,9 @@ void RewriteInstance::updateELFSymbolTable(
         }
 
         NewSymbol.st_shndx =
-            Function->getCodeSection(FF->getFragmentNum())->getIndex();
+            Function->shouldMoveToNewAddress()
+                ? getOutputSectionIndex(OutputAddress)
+                : Function->getCodeSection(FF->getFragmentNum())->getIndex();
       } else {
         // Check if the symbol belongs to moved data object and update it.
         BinaryData *BD = opts::ReorderData.empty()
@@ -6691,7 +6792,8 @@ void RewriteInstance::rewriteFunctionsInPlace(raw_fd_ostream &OS) {
     if (Function->getImageAddress() == 0 || Function->getImageSize() == 0)
       continue;
 
-    assert(Function->getImageSize() <= Function->getMaxSize() &&
+    assert((Function->shouldMoveToNewAddress() ||
+            Function->getImageSize() <= Function->getMaxSize()) &&
            "Unexpected large function");
 
     const auto HasAddress = [](const FunctionFragment &FF) {
@@ -6711,8 +6813,10 @@ void RewriteInstance::rewriteFunctionsInPlace(raw_fd_ostream &OS) {
       continue;
     }
 
-    OverwrittenScore += Function->getFunctionScore();
-    ++CountOverwrittenFunctions;
+    if (!Function->isInjected()) {
+      OverwrittenScore += Function->getFunctionScore();
+      ++CountOverwrittenFunctions;
+    }
 
     // Overwrite function in the output file.
     if (opts::Verbosity >= 2)
@@ -6722,7 +6826,8 @@ void RewriteInstance::rewriteFunctionsInPlace(raw_fd_ostream &OS) {
                Function->getImageSize(), Function->getFileOffset());
 
     // Write nops at the end of the function.
-    if (Function->getMaxSize() != std::numeric_limits<uint64_t>::max()) {
+    if (!Function->shouldMoveToNewAddress() &&
+        Function->getMaxSize() != std::numeric_limits<uint64_t>::max()) {
       uint64_t Pos = OS.tell();
       OS.seek(Function->getFileOffset() + Function->getImageSize());
       BC->MAB->writeNopData(

@@ -77,6 +77,14 @@ Error PatchEntries::runOnFunctions(BinaryContext &BC) {
     if (!BC.shouldEmit(Function))
       continue;
 
+    // Function instrumentation in non-relocation mode emits only the functions
+    // selected by the pass in the new text area. Do not patch unrelated
+    // emitted functions, otherwise their entry patch would target the original
+    // address and turn into a self jump.
+    if (opts::isInstrumentWhatUNeed() && !BC.HasRelocations &&
+        !Function.shouldMoveToNewAddress())
+      continue;
+
     // Check if we can skip patching the function.
     if (!opts::ForcePatch && !Function.hasEHRanges() &&
         !Function.needsPatch() && Function.getSize() < PatchThreshold)

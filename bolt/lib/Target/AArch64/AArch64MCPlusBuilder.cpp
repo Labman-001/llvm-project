@@ -50,18 +50,28 @@ static cl::opt<bool> NoLSEAtomics(
 
 namespace {
 
-[[maybe_unused]] static void getSystemFlag(MCInst &Inst, MCPhysReg RegName) {
+static void getSystemRegister(MCInst &Inst, MCPhysReg RegName,
+                              unsigned SystemRegister) {
   Inst.setOpcode(AArch64::MRS);
   Inst.clear();
   Inst.addOperand(MCOperand::createReg(RegName));
-  Inst.addOperand(MCOperand::createImm(AArch64SysReg::NZCV));
+  Inst.addOperand(MCOperand::createImm(SystemRegister));
+}
+
+static void setSystemRegister(MCInst &Inst, MCPhysReg RegName,
+                              unsigned SystemRegister) {
+  Inst.setOpcode(AArch64::MSR);
+  Inst.clear();
+  Inst.addOperand(MCOperand::createImm(SystemRegister));
+  Inst.addOperand(MCOperand::createReg(RegName));
+}
+
+[[maybe_unused]] static void getSystemFlag(MCInst &Inst, MCPhysReg RegName) {
+  getSystemRegister(Inst, RegName, AArch64SysReg::NZCV);
 }
 
 [[maybe_unused]] static void setSystemFlag(MCInst &Inst, MCPhysReg RegName) {
-  Inst.setOpcode(AArch64::MSR);
-  Inst.clear();
-  Inst.addOperand(MCOperand::createImm(AArch64SysReg::NZCV));
-  Inst.addOperand(MCOperand::createReg(RegName));
+  setSystemRegister(Inst, RegName, AArch64SysReg::NZCV);
 }
 
 static void createPushRegisters(MCInst &Inst, MCPhysReg Reg1, MCPhysReg Reg2) {
@@ -79,6 +89,27 @@ static void createPopRegisters(MCInst &Inst, MCPhysReg Reg1, MCPhysReg Reg2) {
   Inst.clear();
   unsigned NewOpcode = AArch64::LDPXpost;
   Inst.setOpcode(NewOpcode);
+  Inst.addOperand(MCOperand::createReg(AArch64::SP));
+  Inst.addOperand(MCOperand::createReg(Reg1));
+  Inst.addOperand(MCOperand::createReg(Reg2));
+  Inst.addOperand(MCOperand::createReg(AArch64::SP));
+  Inst.addOperand(MCOperand::createImm(2));
+}
+
+static void createPushFPRegisters(MCInst &Inst, MCPhysReg Reg1,
+                                  MCPhysReg Reg2) {
+  Inst.clear();
+  Inst.setOpcode(AArch64::STPQpre);
+  Inst.addOperand(MCOperand::createReg(AArch64::SP));
+  Inst.addOperand(MCOperand::createReg(Reg1));
+  Inst.addOperand(MCOperand::createReg(Reg2));
+  Inst.addOperand(MCOperand::createReg(AArch64::SP));
+  Inst.addOperand(MCOperand::createImm(-2));
+}
+
+static void createPopFPRegisters(MCInst &Inst, MCPhysReg Reg1, MCPhysReg Reg2) {
+  Inst.clear();
+  Inst.setOpcode(AArch64::LDPQpost);
   Inst.addOperand(MCOperand::createReg(AArch64::SP));
   Inst.addOperand(MCOperand::createReg(Reg1));
   Inst.addOperand(MCOperand::createReg(Reg2));
@@ -277,6 +308,121 @@ public:
   void createCall(MCInst &Inst, const MCSymbol *Target,
                   MCContext *Ctx) override {
     createDirectCall(Inst, Target, Ctx, false);
+  }
+
+  InstructionListType
+  createInstrumentedFunctionCall(const MCSymbol *Target,
+                                 const MCSymbol *FunctionSymbol,
+                                 MCContext *Ctx) override {
+    InstructionListType Insts;
+    auto PushRegs = [&](MCPhysReg Reg1, MCPhysReg Reg2) {
+      createPushRegisters(Insts.emplace_back(), Reg1, Reg2);
+    };
+    auto PopRegs = [&](MCPhysReg Reg1, MCPhysReg Reg2) {
+      createPopRegisters(Insts.emplace_back(), Reg1, Reg2);
+    };
+    auto PushFPRegs = [&](MCPhysReg Reg1, MCPhysReg Reg2) {
+      createPushFPRegisters(Insts.emplace_back(), Reg1, Reg2);
+    };
+    auto PopFPRegs = [&](MCPhysReg Reg1, MCPhysReg Reg2) {
+      createPopFPRegisters(Insts.emplace_back(), Reg1, Reg2);
+    };
+
+    PushRegs(AArch64::X0, AArch64::X1);
+    PushRegs(AArch64::X2, AArch64::X3);
+    PushRegs(AArch64::X4, AArch64::X5);
+    PushRegs(AArch64::X6, AArch64::X7);
+    PushRegs(AArch64::X8, AArch64::X9);
+    PushRegs(AArch64::X10, AArch64::X11);
+    PushRegs(AArch64::X12, AArch64::X13);
+    PushRegs(AArch64::X14, AArch64::X15);
+    PushRegs(AArch64::X16, AArch64::X17);
+    PushRegs(AArch64::X18, AArch64::XZR);
+    PushRegs(AArch64::LR, AArch64::XZR);
+    PushFPRegs(AArch64::Q0, AArch64::Q1);
+    PushFPRegs(AArch64::Q2, AArch64::Q3);
+    PushFPRegs(AArch64::Q4, AArch64::Q5);
+    PushFPRegs(AArch64::Q6, AArch64::Q7);
+    PushFPRegs(AArch64::Q8, AArch64::Q9);
+    PushFPRegs(AArch64::Q10, AArch64::Q11);
+    PushFPRegs(AArch64::Q12, AArch64::Q13);
+    PushFPRegs(AArch64::Q14, AArch64::Q15);
+    PushFPRegs(AArch64::Q16, AArch64::Q17);
+    PushFPRegs(AArch64::Q18, AArch64::Q19);
+    PushFPRegs(AArch64::Q20, AArch64::Q21);
+    PushFPRegs(AArch64::Q22, AArch64::Q23);
+    PushFPRegs(AArch64::Q24, AArch64::Q25);
+    PushFPRegs(AArch64::Q26, AArch64::Q27);
+    PushFPRegs(AArch64::Q28, AArch64::Q29);
+    PushFPRegs(AArch64::Q30, AArch64::Q31);
+
+    getSystemRegister(Insts.emplace_back(), AArch64::X0, AArch64SysReg::NZCV);
+    getSystemRegister(Insts.emplace_back(), AArch64::X1, AArch64SysReg::FPCR);
+    getSystemRegister(Insts.emplace_back(), AArch64::X2, AArch64SysReg::FPSR);
+    PushRegs(AArch64::X0, AArch64::X1);
+    PushRegs(AArch64::X2, AArch64::XZR);
+
+    InstructionListType FunctionAddress =
+        materializeAddress(FunctionSymbol, Ctx, AArch64::X0);
+    llvm::append_range(Insts, FunctionAddress);
+    InstructionListType HookAddress =
+        materializeAddress(Target, Ctx, AArch64::X16);
+    llvm::append_range(Insts, HookAddress);
+    createIndirectCallInst(Insts.emplace_back(), /*IsTailCall=*/false,
+                           AArch64::X16);
+
+    PopRegs(AArch64::X2, AArch64::XZR);
+    PopRegs(AArch64::X0, AArch64::X1);
+    setSystemRegister(Insts.emplace_back(), AArch64::X2, AArch64SysReg::FPSR);
+    setSystemRegister(Insts.emplace_back(), AArch64::X1, AArch64SysReg::FPCR);
+    setSystemRegister(Insts.emplace_back(), AArch64::X0, AArch64SysReg::NZCV);
+
+    PopFPRegs(AArch64::Q30, AArch64::Q31);
+    PopFPRegs(AArch64::Q28, AArch64::Q29);
+    PopFPRegs(AArch64::Q26, AArch64::Q27);
+    PopFPRegs(AArch64::Q24, AArch64::Q25);
+    PopFPRegs(AArch64::Q22, AArch64::Q23);
+    PopFPRegs(AArch64::Q20, AArch64::Q21);
+    PopFPRegs(AArch64::Q18, AArch64::Q19);
+    PopFPRegs(AArch64::Q16, AArch64::Q17);
+    PopFPRegs(AArch64::Q14, AArch64::Q15);
+    PopFPRegs(AArch64::Q12, AArch64::Q13);
+    PopFPRegs(AArch64::Q10, AArch64::Q11);
+    PopFPRegs(AArch64::Q8, AArch64::Q9);
+    PopFPRegs(AArch64::Q6, AArch64::Q7);
+    PopFPRegs(AArch64::Q4, AArch64::Q5);
+    PopFPRegs(AArch64::Q2, AArch64::Q3);
+    PopFPRegs(AArch64::Q0, AArch64::Q1);
+    PopRegs(AArch64::LR, AArch64::XZR);
+    PopRegs(AArch64::X18, AArch64::XZR);
+    PopRegs(AArch64::X16, AArch64::X17);
+    PopRegs(AArch64::X14, AArch64::X15);
+    PopRegs(AArch64::X12, AArch64::X13);
+    PopRegs(AArch64::X10, AArch64::X11);
+    PopRegs(AArch64::X8, AArch64::X9);
+    PopRegs(AArch64::X6, AArch64::X7);
+    PopRegs(AArch64::X4, AArch64::X5);
+    PopRegs(AArch64::X2, AArch64::X3);
+    PopRegs(AArch64::X0, AArch64::X1);
+    return Insts;
+  }
+
+  InstructionListType
+  createInstrumentedFunctionDispatch(const MCSymbol *TargetLocation,
+                                     MCContext *Ctx) override {
+    InstructionListType Insts =
+        materializeAddress(TargetLocation, Ctx, AArch64::X16);
+    Insts.emplace_back(MCInstBuilder(AArch64::LDRXui)
+                           .addReg(AArch64::X17)
+                           .addReg(AArch64::X16)
+                           .addImm(0));
+    Insts.emplace_back(MCInstBuilder(AArch64::ADDXrs)
+                           .addReg(AArch64::X16)
+                           .addReg(AArch64::X16)
+                           .addReg(AArch64::X17)
+                           .addImm(0));
+    Insts.emplace_back(MCInstBuilder(AArch64::BR).addReg(AArch64::X16));
+    return Insts;
   }
 
   bool convertTailCallToCall(MCInst &Inst) override {

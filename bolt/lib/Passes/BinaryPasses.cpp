@@ -684,7 +684,7 @@ Error CheckLargeFunctions::runOnFunctions(BinaryContext &BC) {
   };
 
   ParallelUtilities::PredicateTy SkipFunc = [&](const BinaryFunction &BF) {
-    return !shouldOptimize(BF);
+    return !shouldOptimize(BF) || BF.shouldMoveToNewAddress();
   };
 
   ParallelUtilities::runOnEachFunction(

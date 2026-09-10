@@ -2779,6 +2779,102 @@ public:
         MCOperand::createExpr(MCSymbolRefExpr::create(Target, *Ctx)));
   }
 
+  InstructionListType
+  createInstrumentedFunctionCall(const MCSymbol *Target,
+                                 const MCSymbol *FunctionSymbol,
+                                 MCContext *Ctx) override {
+    InstructionListType Insts;
+    auto PushReg = [&](MCPhysReg Reg) {
+      createPushRegister(Insts.emplace_back(), Reg, 8);
+    };
+    auto PopReg = [&](MCPhysReg Reg) {
+      createPopRegister(Insts.emplace_back(), Reg, 8);
+    };
+    auto CreateFPStateAccess = [&](unsigned Opcode) {
+      MCInst &Inst = Insts.emplace_back();
+      Inst.setOpcode(Opcode);
+      Inst.addOperand(MCOperand::createReg(X86::RSP));
+      Inst.addOperand(MCOperand::createImm(1));
+      Inst.addOperand(MCOperand::createReg(X86::NoRegister));
+      Inst.addOperand(MCOperand::createImm(0));
+      Inst.addOperand(MCOperand::createReg(X86::NoRegister));
+    };
+
+    createStackPointerIncrement(Insts.emplace_back(), 128,
+                                /*NoFlagsClobber=*/true);
+    PushReg(X86::RAX);
+    PushReg(X86::RCX);
+    PushReg(X86::RDX);
+    PushReg(X86::RSI);
+    PushReg(X86::RDI);
+    PushReg(X86::R8);
+    PushReg(X86::R9);
+    PushReg(X86::R10);
+    PushReg(X86::R11);
+    createPushFlags(Insts.emplace_back(), 8);
+
+    Insts.emplace_back(
+        MCInstBuilder(X86::MOV64rr).addReg(X86::R11).addReg(X86::RSP));
+    createStackPointerIncrement(Insts.emplace_back(), 528,
+                                /*NoFlagsClobber=*/true);
+    Insts.emplace_back(MCInstBuilder(X86::AND64ri32)
+                           .addReg(X86::RSP)
+                           .addReg(X86::RSP)
+                           .addImm(-16));
+    createSaveToStack(Insts.emplace_back(), X86::RSP, 512, X86::R11, 8);
+    CreateFPStateAccess(X86::FXSAVE64);
+    Insts.emplace_back(
+        MCInstBuilder(X86::LEA64r)
+            .addReg(X86::RDI)
+            .addReg(X86::RIP)
+            .addImm(1)
+            .addReg(X86::NoRegister)
+            .addExpr(MCSymbolRefExpr::create(FunctionSymbol, *Ctx))
+            .addReg(X86::NoRegister));
+    createCall(Insts.emplace_back(), Target, Ctx);
+    CreateFPStateAccess(X86::FXRSTOR64);
+    createRestoreFromStack(Insts.emplace_back(), X86::RSP, 512, X86::R11, 8);
+    Insts.emplace_back(
+        MCInstBuilder(X86::MOV64rr).addReg(X86::RSP).addReg(X86::R11));
+
+    createPopFlags(Insts.emplace_back(), 8);
+    PopReg(X86::R11);
+    PopReg(X86::R10);
+    PopReg(X86::R9);
+    PopReg(X86::R8);
+    PopReg(X86::RDI);
+    PopReg(X86::RSI);
+    PopReg(X86::RDX);
+    PopReg(X86::RCX);
+    PopReg(X86::RAX);
+    createStackPointerDecrement(Insts.emplace_back(), 128,
+                                /*NoFlagsClobber=*/true);
+    return Insts;
+  }
+
+  InstructionListType
+  createInstrumentedFunctionDispatch(const MCSymbol *TargetLocation,
+                                     MCContext *Ctx) override {
+    InstructionListType Insts(3);
+    Insts[0] = MCInstBuilder(X86::LEA64r)
+                   .addReg(X86::R11)
+                   .addReg(X86::RIP)
+                   .addImm(1)
+                   .addReg(X86::NoRegister)
+                   .addExpr(MCSymbolRefExpr::create(TargetLocation, *Ctx))
+                   .addReg(X86::NoRegister);
+    Insts[1] = MCInstBuilder(X86::ADD64rm)
+                   .addReg(X86::R11)
+                   .addReg(X86::R11)
+                   .addReg(X86::R11)
+                   .addImm(1)
+                   .addReg(X86::NoRegister)
+                   .addImm(0)
+                   .addReg(X86::NoRegister);
+    Insts[2] = MCInstBuilder(X86::JMP64r).addReg(X86::R11);
+    return Insts;
+  }
+
   void createTailCall(MCInst &Inst, const MCSymbol *Target,
                       MCContext *Ctx) override {
     return createDirectCall(Inst, Target, Ctx, /*IsTailCall*/ true);

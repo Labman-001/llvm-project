@@ -280,10 +280,36 @@ cl::opt<bool> Hugify(
              "--hot-text relies on)."),
     cl::cat(BoltOptCategory));
 
-cl::opt<bool>
-    Instrument("instrument",
-               cl::desc("instrument code to generate accurate profile data"),
-               cl::cat(BoltOptCategory));
+cl::list<InstrumentationMode> Instrument(
+    "instrument", cl::desc("instrument code"),
+    cl::values(
+        clEnumValN(InstrumentationMode::Counter, "",
+                   "instrument code to generate accurate profile data"),
+        clEnumValN(InstrumentationMode::Counter, "counter",
+                   "instrument code to generate accurate profile data"),
+        clEnumValN(InstrumentationMode::FuncEntry, "func-entry",
+                   "insert calls at function entries"),
+        clEnumValN(InstrumentationMode::FuncExit, "func-exit",
+                   "insert calls at function exits")),
+    cl::ValueOptional, cl::CommaSeparated,
+    cl::cat(BoltOptCategory));
+
+cl::list<std::string> InstrumentFuncList(
+    "instrument-func-list", cl::CommaSeparated,
+    cl::desc("instrument functions whose names contain a matching regex"),
+    cl::value_desc("regex1,regex2,..."), cl::ZeroOrMore,
+    cl::cat(BoltInstrCategory));
+
+cl::opt<std::string> InstrumentFuncListFile(
+    "instrument-func-list-file",
+    cl::desc("file containing comma-separated function regexes"),
+    cl::value_desc("filename"), cl::init(""), cl::Optional,
+    cl::cat(BoltInstrCategory));
+
+cl::opt<bool> InstrumentFuncPrint(
+    "instrument-func-print",
+    cl::desc("print successfully instrumented functions to stdout"),
+    cl::init(false), cl::cat(BoltInstrCategory));
 
 cl::opt<bool> LargeCodeModel(
     "large-code-model",

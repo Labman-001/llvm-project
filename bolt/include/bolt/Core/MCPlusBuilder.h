@@ -1979,6 +1979,23 @@ public:
     llvm_unreachable("not implemented");
   }
 
+  /// Create a call to an ordinary ABI instrumentation function, passing
+  /// \p FunctionSymbol's runtime address as its first integer argument, while
+  /// preserving caller-visible state needed at an arbitrary function entry or
+  /// exit.
+  virtual InstructionListType createInstrumentedFunctionCall(
+      const MCSymbol *Target, const MCSymbol *FunctionSymbol, MCContext *Ctx) {
+    llvm_unreachable("not implemented");
+  }
+
+  /// Create a position-independent tail dispatch through a signed relative
+  /// offset stored at \p TargetLocation.
+  virtual InstructionListType
+  createInstrumentedFunctionDispatch(const MCSymbol *TargetLocation,
+                                     MCContext *Ctx) {
+    llvm_unreachable("not implemented");
+  }
+
   /// Creates a new tail call instruction in Inst and sets its operand to
   /// Target.
   virtual void createTailCall(MCInst &Inst, const MCSymbol *Target,

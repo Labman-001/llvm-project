@@ -102,6 +102,12 @@ if config.libbolt_rt_hugify:
     llvm_bolt_args.append(f"--runtime-hugify-lib={config.libbolt_rt_hugify}")
     config.substitutions.append(("%libbolt_rt_hugify", config.libbolt_rt_hugify))
 
+if config.libbolt_rt_iwyn:
+    llvm_bolt_args.append(
+        f"--runtime-instrument-what-u-need-lib={config.libbolt_rt_iwyn}"
+    )
+    config.substitutions.append(("%libbolt_rt_iwyn", config.libbolt_rt_iwyn))
+
 tools = [
     ToolSubst("llc", unresolved="fatal"),
     ToolSubst("llvm-dwarfdump", unresolved="fatal"),
